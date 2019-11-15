@@ -30,3 +30,9 @@ end
 
 ncv_from_data = NamedCompositeVector([x, y], ["x", "y"])
 @Test.test ncv_from_data == ncv
+
+ncv_from_ddata = NamedCompositeVector(Dict("x"=>x, "y"=>y))
+@Test.test ncv_from_ddata == ncv
+
+update!(ncv_int, Dict("x"=>convert(Array{Int64}, x.+1), "y"=>convert(Array{Int64}, y.+1)))
+@Test.test ncv_int == ncv .+ 1

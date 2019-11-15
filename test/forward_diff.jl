@@ -38,3 +38,30 @@ end
 
 @Test.test f_d!([0.], [0.], [2.0], [3.0]) == [8.0  27.0;
                                               2.0 -27.0]
+
+function g!(inputs, outputs)
+    x1 = inputs["x1"]
+    x2 = inputs["x2"]
+    y1 = outputs["y1"]
+    y2 = outputs["y2"]
+    @. y1 = 2*x1^2 + x2^3
+    @. y2 = 0.5*x1^2 - x2^3
+    return nothing
+end
+
+function g_d!(inputs, outputs)
+
+    function g_wrap!(y, x)
+        return g!(x.ddata, y.ddata)
+    end
+
+    x_ncv = NamedCompositeVector(inputs)
+    y_ncv = NamedCompositeVector(outputs)
+
+    return ForwardDiff.jacobian(g_wrap!, y_ncv, x_ncv)
+end
+
+@Test.test g_d!(
+           Dict("x1"=>[2.0], "x2"=>[3.0]),
+           Dict("y1"=>[0.0], "y2"=>[0.0])) == [8.0  27.0; 2.0 -27.0]
+

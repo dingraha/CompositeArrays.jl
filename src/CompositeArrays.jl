@@ -52,10 +52,10 @@ end
 
 mutable struct CompositeVector{T, N, A} <: AbstractCompositeVector{T, N}
     sizes::Vector{NTuple{N, Int}}
-    offsets::Array{Int}
+    offsets::Vector{Int}
     data::Vector{A}
     function CompositeVector{T, N, A}(sizes::Vector{NTuple{N, Int}}) where {T, N, A<:AbstractArray{T, N}}
-        return new(sizes, calc_offsets(sizes))
+        return new(copy(sizes), calc_offsets(sizes))
     end
 end
 
@@ -116,7 +116,7 @@ mutable struct NamedCompositeVector{T, N, A} <: AbstractCompositeVector{T, N}
     ddata::AbstractDict{String, A}
     function NamedCompositeVector{T, N, A}(sizes::Vector{NTuple{N, Int}}, names) where {T, N, A<:AbstractArray{T, N}}
         name2idx = Dict(name=>i for (i, name) in enumerate(names))
-        return new(sizes, calc_offsets(sizes), name2idx)
+        return new(copy(sizes), calc_offsets(sizes), name2idx)
     end
 end
 
@@ -124,12 +124,42 @@ function NamedCompositeVector(::Type{A}, sizes::Vector{NTuple{N, Int}}, names) w
     return NamedCompositeVector{T, N, A}(sizes, names)
 end
 
-function update!(a::NamedCompositeVector, data)
+function NamedCompositeVector(data::AbstractVector{A}, names) where {T, N, A<:AbstractArray{T, N}}
+    a = NamedCompositeVector{T, N, A}(size.(data), names)
+    update!(a, data)
+    return a
+end
+
+
+function NamedCompositeVector(ddata::AbstractDict{String, A}) where {T, N, A<:AbstractArray{T, N}}
+    names = sort([k for k in keys(ddata)])
+    data = [ddata[name] for name in names]
+    a = NamedCompositeVector{T, N, A}(size.(data), names)
+    update!(a, data)
+    return a
+end
+
+
+function update!(a::NamedCompositeVector{T, N, A}, data::AbstractVector{A}) where {T, N, A<:AbstractArray{T, N}}
     if ! all(size.(data) == a.sizes)
         throw(ArgumentError("sizes of data argument not equal to NamedCompositeVector sizes"))
     end
     a.data = data
     a.ddata = Dict(name=>a.data[idx] for (name, idx) in a.name2idx)
+    return nothing
+end
+
+function update!(a::NamedCompositeVector{T, N, A}, ddata::AbstractDict{String, A}) where {T, N, A<:AbstractArray{T, N}}
+    # Need to get a list of names in the right order.
+    idx2name = Dict(v=>k for (k, v) in a.name2idx)
+    names = [idx2name[i] for i in 1:length(idx2name)]
+
+    # Get a Vector of the new data in the correct order.
+    data = [ddata[name] for name in names]
+
+    # Do it.
+    update!(a, data)
+
     return nothing
 end
 
@@ -149,13 +179,6 @@ function Base.similar(a::NamedCompositeVector{T, N, A}, ::Type{S}) where {T, N, 
 
     return b
 end
-
-function NamedCompositeVector(data::Vector{A}, names) where {T, N, A<:AbstractArray{T, N}}
-    a = NamedCompositeVector{T, N, A}(size.(data), names)
-    update!(a, data)
-    return a
-end
-
 
 #function NamedCompositeVector(data::Array{Array{T, N}, 1}, names) where {T, N}
 #    n = length(data)
@@ -218,15 +241,163 @@ end
 #    return NamedCompositeVector(ddata)
 #end
 
-##
-## Composite Matrix
-##
+#
+# Composite Matrix
+#
 
-#mutable struct CompositeMatrix{T} <: AbstractCompositeMatrix{T}
-#    data::Array{Array{T, 2}, 2}
-#    row_offsets::Array{Int, 1}
-#    col_offsets::Array{Int, 1}
-#end
+mutable struct CompositeMatrix{T, N, A} <: AbstractCompositeMatrix{T}
+    row_sizes::Vector{NTuple{N, Int}}
+    col_sizes::Vector{NTuple{N, Int}}
+    row_offsets::Vector{Int}
+    col_offsets::Vector{Int}
+    data::AbstractMatrix{A}
+    function CompositeMatrix{T, N, A}(row_sizes::Vector{NTuple{N, Int}}, col_sizes::Vector{NTuple{N, Int}}) where {T, N, A<:AbstractMatrix{T}}
+        return new(copy(row_sizes), copy(col_sizes), calc_offsets(row_sizes), calc_offsets(col_sizes))
+    end
+end
+
+function CompositeMatrix(::Type{A}, row_sizes::Vector{NTuple{N, Int}}, col_sizes::Vector{NTuple{N, Int}}) where {T, N, A<:AbstractMatrix{T}}
+    return CompositeMatrix{T, N, A}(row_sizes, col_sizes)
+end
+
+function CompositeMatrix(row_sizes::Vector{NTuple{N, Int}}, col_sizes::Vector{NTuple{N, Int}}, data::AbstractMatrix{A}) where {T, N, A<:AbstractMatrix{T}}
+    a = CompositeMatrix{T, N, A}(row_sizes, col_sizes)
+    update!(a, data)
+    return a
+end
+
+Base.IndexStyle(::Type{<:AbstractCompositeMatrix}) = IndexCartesian()
+
+Base.size(a::AbstractCompositeMatrix) = (a.row_offsets[end], a.col_offsets[end])
+
+function Base.getindex(a::AbstractCompositeMatrix, I::Vararg{Int, 2})
+    rj, rk = composite_index(a.row_offsets, I[1])
+    cj, ck = composite_index(a.col_offsets, I[2])
+    return a.data[rj, cj][rk, ck]
+end
+
+function Base.setindex!(a::AbstractCompositeMatrix, v, I::Vararg{Int, 2})
+    rj, rk = composite_index(a.row_offsets, I[1])
+    cj, ck = composite_index(a.col_offsets, I[2])
+    a.data[rj, cj][rk, ck] = v
+end
+
+function Base.similar(a::CompositeMatrix{T, N, A}, ::Type{S}) where {T, N, A, S}
+    b = CompositeMatrix{S, N, Matrix{S}}(a.row_sizes, a.col_sizes)
+    data = Matrix{Matrix{S}}(undef, length(b.row_sizes), length(b.col_sizes))
+    for j in 1:length(b.col_sizes)
+        col_size = prod(b.col_sizes[j])
+        for i in 1:length(b.row_sizes)
+            row_size = prod(b.row_sizes[i])
+            data[i, j] = Matrix{S}(undef, row_size, col_size)
+        end
+    end
+    return b
+end
+
+function update!(a::CompositeMatrix{T, N, A}, data::Matrix{A}) where {T, N, A<:AbstractMatrix{T}}
+    # Need to iterate over data, checking that each entry is consistent with
+    # the coresponding entry in row_sizes and col_sizes.
+    for j in 1:length(a.col_sizes)
+        col_size = prod(a.col_sizes[j])
+        for i in 1:length(a.row_sizes)
+            row_size = prod(a.row_sizes[i])
+            expected_size = (row_size, col_size)
+            if ! (size(data[i, j]) == expected_size)
+                throw(ArgumentError("entry at row $(i), col $(i) in data argument does not match expected size $(expected_size)"))
+            end
+        end
+    end
+    a.data = data
+    return nothing
+end
+
+mutable struct NamedCompositeMatrix{T, N, A} <: AbstractCompositeMatrix{T}
+    row_sizes::Vector{NTuple{N, Int}}
+    col_sizes::Vector{NTuple{N, Int}}
+    row_names::Vector{String}
+    col_names::Vector{String}
+    row_offsets::Vector{Int}
+    col_offsets::Vector{Int}
+    row_name2idx::Dict{String, Int}
+    col_name2idx::Dict{String, Int}
+    data::AbstractMatrix{A}
+    ddata::AbstractDict{Tuple{String, String}, A}
+    function NamedCompositeMatrix{T, N, A}(row_sizes::Vector{NTuple{N, Int}}, col_sizes::Vector{NTuple{N, Int}}, row_names, col_names) where {T, N, A<:AbstractMatrix{T}}
+        if length(row_names) != length(row_sizes)
+            raise(ArgumentError("length of row_names and row_sizes arguments differ"))
+        end
+        if length(col_names) != length(col_sizes)
+            raise(ArgumentError("length of col_names and col_sizes arguments differ"))
+        end
+        row_name2idx = Dict(name=>i for (i, name) in enumerate(row_names))
+        col_name2idx = Dict(name=>i for (i, name) in enumerate(col_names))
+        return new(copy(row_sizes), copy(col_sizes), copy(row_names), copy(col_names), calc_offsets(row_sizes), calc_offsets(col_sizes), row_name2idx, col_name2idx)
+    end
+end
+
+function NamedCompositeMatrix(::Type{A}, row_sizes::Vector{NTuple{N, Int}}, col_sizes::Vector{NTuple{N, Int}}, row_names, col_names) where {T, N, A<:AbstractMatrix{T}}
+    return NamedCompositeMatrix{T, N, A}(row_sizes, col_sizes, row_names, col_names)
+end
+
+function NamedCompositeMatrix(row_sizes::Vector{NTuple{N, Int}}, col_sizes::Vector{NTuple{N, Int}}, row_names, col_names, data::AbstractMatrix{A}) where {T, N, A<:AbstractMatrix{T}}
+    a = NamedCompositeMatrix{T, N, A}(row_sizes, col_sizes, row_names, col_names)
+    update!(a, data)
+    return a
+end
+
+# Most of this is the same as CompositeMatrix. I think I could make
+# CompositeMatrix's version work with AbstractCompositeMatrix, then just call
+# that from here, and update the ddata attribute after that.
+function update!(a::NamedCompositeMatrix{T, N, A}, data::Matrix{A}) where {T, N, A<:AbstractMatrix{T}}
+    # Need to iterate over data, checking that each entry is consistent with
+    # the coresponding entry in row_sizes and col_sizes.
+    for j in 1:length(a.col_sizes)
+        col_size = prod(a.col_sizes[j])
+        for i in 1:length(a.row_sizes)
+            row_size = prod(a.row_sizes[i])
+            expected_size = (row_size, col_size)
+            if ! (size(data[i, j]) == expected_size)
+                throw(ArgumentError("entry at row $(i), col $(i) in data argument does not match expected size $(expected_size)"))
+            end
+        end
+    end
+    a.data = data
+
+    ddata = Dict{Tuple{String, String}, A}()
+    for (col_name, col_idx) in a.col_name2idx
+        for (row_name, row_idx) in a.row_name2idx
+            ddata[(row_name, col_name)] = data[row_idx, col_idx]
+        end
+    end
+    a.ddata = ddata
+
+    return nothing
+end
+
+function Base.similar(a::NamedCompositeMatrix{T, N, A}, ::Type{S}) where {T, N, A, S}
+    b = NamedCompositeMatrix{S, N, Matrix{S}}(a.row_sizes, a.col_sizes, a.row_names, a.col_names)
+    data = Matrix{Matrix{S}}(undef, length(b.row_sizes), length(b.col_sizes))
+    for j in 1:length(b.col_sizes)
+        col_size = prod(b.col_sizes[j])
+        for i in 1:length(b.row_sizes)
+            row_size = prod(b.row_sizes[i])
+            data[i, j] = Matrix{S}(undef, row_size, col_size)
+        end
+    end
+
+    update!(b, data)
+
+    # ddata = Dict{Tuple{String, String}, Matrix{S}}()
+    # for (col_name, col_idx) in b.col_name2idx
+    #     for (row_name, row_idx) in b.row_name2idx
+    #         ddata[(row_name, col_name)] = b.data[row_idx, col_idx]
+    #     end
+    # end
+    # b.ddata = ddata
+
+    return b
+end
 
 #function CompositeMatrix{T}(row_sizes::Array{NTuple{N, Int}, 1}, col_sizes::Array{NTuple{N, Int}, 1}) where {T, N}
 #    row_offsets = calc_offsets(row_sizes)
