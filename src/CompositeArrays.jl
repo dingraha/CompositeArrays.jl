@@ -150,7 +150,8 @@ function NamedCompositeVector(ddata::AbstractDict{String, A}) where {T, N, A<:Ab
 end
 
 
-function update!(a::NamedCompositeVector{T, N, A}, data::AbstractVector{A}) where {T, N, A<:AbstractArray{T, N}}
+# function update!(a::NamedCompositeVector{T, N, A}, data::AbstractVector{A}) where {T, N, A<:AbstractArray{T, N}}
+function update!(a::NamedCompositeVector{T, N, A}, data::AbstractVector) where {T, N, A<:AbstractArray{T, N}}
     for (i, expected_size) in enumerate(a.sizes)
         if size(data[i]) == expected_size
             a.data[i] = data[i]
@@ -162,7 +163,8 @@ function update!(a::NamedCompositeVector{T, N, A}, data::AbstractVector{A}) wher
     return nothing
 end
 
-function update!(a::NamedCompositeVector{T, N, A}, ddata::AbstractDict{String, A}) where {T, N, A<:AbstractArray{T, N}}
+# function update!(a::NamedCompositeVector{T, N, A}, ddata::AbstractDict{String, A}) where {T, N, A<:AbstractArray{T, N}}
+function update!(a::NamedCompositeVector{T, N, A}, ddata::AbstractDict) where {T, N, A<:AbstractArray{T, N}}
     # Get a Vector of the new data in the correct order.
     data = [ddata[name] for name in a.names]
 
@@ -174,15 +176,12 @@ end
 
 function Base.similar(a::NamedCompositeVector{T, N, A}, ::Type{S}) where {T, N, A, S}
 
-    # Need to get a list of names in the right order.
-    idx2name = Dict(v=>k for (k, v) in a.name2idx)
-    names = [idx2name[i] for i in 1:length(idx2name)]
+    b = NamedCompositeVector{S, N, Array{S, N}}(a.sizes, a.names)
 
-    b = NamedCompositeVector{S, N, Array{S, N}}(a.sizes, names)
-
-    data = Vector{Array{S, N}}()
-    for sz in b.sizes
-        push!(data, Array{S}(undef, sz...))
+    data = Vector{Array{S, N}}(undef, length(b.sizes))
+    for (i, sz) in enumerate(b.sizes)
+        # push!(data, Array{S}(undef, sz...))
+        data[i] = Array{S, N}(undef, sz...)
     end
     update!(b, data)
 
@@ -310,7 +309,8 @@ end
 # Most of this is the same as CompositeMatrix. I think I could make
 # CompositeMatrix's version work with AbstractCompositeMatrix, then just call
 # that from here, and update the ddata attribute after that.
-function update!(a::NamedCompositeMatrix{T, N, A}, data::Matrix{A}) where {T, N, A<:AbstractMatrix{T}}
+# function update!(a::NamedCompositeMatrix{T, N, A}, data::Matrix{A}) where {T, N, A<:AbstractMatrix{T}}
+function update!(a::NamedCompositeMatrix{T, N, A}, data::AbstractMatrix) where {T, N, A<:AbstractMatrix{T}}
     # Need to iterate over data, checking that each entry is consistent with
     # the coresponding entry in row_sizes and col_sizes.
     for j in 1:length(a.col_sizes)
@@ -330,7 +330,8 @@ function update!(a::NamedCompositeMatrix{T, N, A}, data::Matrix{A}) where {T, N,
     return nothing
 end
 
-function update!(a::NamedCompositeMatrix{T, N, A}, ddata::Dict{Tuple{String, String}, A}) where {T, N, A<:AbstractMatrix{T}}
+# function update!(a::NamedCompositeMatrix{T, N, A}, ddata::Dict{Tuple{String, String}, A}) where {T, N, A<:AbstractMatrix{T}}
+function update!(a::NamedCompositeMatrix{T, N, A}, ddata::AbstractDict) where {T, N, A<:AbstractMatrix{T}}
     # Need to iterate over ddata, checking that each entry is consistent with
     # the coresponding entry in row_sizes and col_sizes.
     for ((row_name, col_name), val) in ddata
