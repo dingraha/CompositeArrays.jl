@@ -25,3 +25,11 @@ ncm_from_data = NamedCompositeMatrix([(1, 2), (3, 4)], [(2, 3), (4, 5)], ["y1", 
 @Test.test ncm.ddata[("y1", "x2")] == data[1, 2]
 @Test.test ncm.ddata[("y2", "x1")] == data[2, 1]
 @Test.test ncm.ddata[("y2", "x2")] == data[2, 2]
+
+ddata = Dict(("y1", "x1")=>data[1, 1],
+             ("y1", "x2")=>data[1, 2],
+             ("y2", "x1")=>data[2, 1],
+             ("y2", "x2")=>data[2, 2])
+
+ncm_from_ddata = NamedCompositeMatrix([(1, 2), (3, 4)], [(2, 3), (4, 5)], ["y1", "y2"], ["x1", "x2"], ddata)
+@test ncm_from_ddata == ncm

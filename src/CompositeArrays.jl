@@ -321,8 +321,8 @@ mutable struct NamedCompositeMatrix{T, N, A} <: AbstractCompositeMatrix{T}
     col_offsets::Vector{Int}
     row_name2idx::Dict{String, Int}
     col_name2idx::Dict{String, Int}
-    data::AbstractMatrix{A}
-    ddata::AbstractDict{Tuple{String, String}, A}
+    data::Matrix{A}
+    ddata::Dict{Tuple{String, String}, A}
     function NamedCompositeMatrix{T, N, A}(row_sizes::Vector{NTuple{N, Int}}, col_sizes::Vector{NTuple{N, Int}}, row_names, col_names) where {T, N, A<:AbstractMatrix{T}}
         if length(row_names) != length(row_sizes)
             raise(ArgumentError("length of row_names and row_sizes arguments differ"))
@@ -332,7 +332,11 @@ mutable struct NamedCompositeMatrix{T, N, A} <: AbstractCompositeMatrix{T}
         end
         row_name2idx = Dict(name=>i for (i, name) in enumerate(row_names))
         col_name2idx = Dict(name=>i for (i, name) in enumerate(col_names))
-        return new(copy(row_sizes), copy(col_sizes), copy(row_names), copy(col_names), calc_offsets(row_sizes), calc_offsets(col_sizes), row_name2idx, col_name2idx)
+
+        data = Matrix{A}(undef, length(row_names), length(col_names))
+        ddata = Dict{Tuple{String, String}, A}()
+                
+        return new(copy(row_sizes), copy(col_sizes), copy(row_names), copy(col_names), calc_offsets(row_sizes), calc_offsets(col_sizes), row_name2idx, col_name2idx, data, ddata)
     end
 end
 
@@ -343,6 +347,12 @@ end
 function NamedCompositeMatrix(row_sizes::Vector{NTuple{N, Int}}, col_sizes::Vector{NTuple{N, Int}}, row_names, col_names, data::AbstractMatrix{A}) where {T, N, A<:AbstractMatrix{T}}
     a = NamedCompositeMatrix{T, N, A}(row_sizes, col_sizes, row_names, col_names)
     update!(a, data)
+    return a
+end
+
+function NamedCompositeMatrix(row_sizes::Vector{NTuple{N, Int}}, col_sizes::Vector{NTuple{N, Int}}, row_names, col_names, ddata::AbstractDict{Tuple{String, String}, A}) where {T, N, A<:AbstractMatrix{T}}
+    a = NamedCompositeMatrix{T, N, A}(row_sizes, col_sizes, row_names, col_names)
+    update!(a, ddata)
     return a
 end
 
@@ -357,20 +367,37 @@ function update!(a::NamedCompositeMatrix{T, N, A}, data::Matrix{A}) where {T, N,
         for i in 1:length(a.row_sizes)
             row_size = prod(a.row_sizes[i])
             expected_size = (row_size, col_size)
-            if ! (size(data[i, j]) == expected_size)
+            if size(data[i, j]) == expected_size
+                a.data[i, j] = data[i, j]
+                a.ddata[a.row_names[i], a.col_names[j]] = data[i, j]
+            else
                 throw(ArgumentError("entry at row $(i), col $(i) in data argument does not match expected size $(expected_size)"))
             end
         end
     end
-    a.data = data
 
-    ddata = Dict{Tuple{String, String}, A}()
-    for (col_name, col_idx) in a.col_name2idx
-        for (row_name, row_idx) in a.row_name2idx
-            ddata[(row_name, col_name)] = data[row_idx, col_idx]
+    return nothing
+end
+
+function update!(a::NamedCompositeMatrix{T, N, A}, ddata::Dict{Tuple{String, String}, A}) where {T, N, A<:AbstractMatrix{T}}
+    # Need to iterate over ddata, checking that each entry is consistent with
+    # the coresponding entry in row_sizes and col_sizes.
+    for ((row_name, col_name), val) in ddata
+        i = a.row_name2idx[row_name]
+        row_size = prod(a.row_sizes[i])
+
+        j = a.col_name2idx[col_name]
+        col_size = prod(a.col_sizes[j])
+
+        expected_size = (row_size, col_size)
+
+        if size(val) == expected_size
+            a.data[i, j] = val
+            a.ddata[row_name, col_name] = val
+        else
+            throw(ArgumentError("entry at row $(row_name), col $(col_name) in data argument does not match expected size $(expected_size)"))
         end
     end
-    a.ddata = ddata
 
     return nothing
 end
@@ -387,14 +414,6 @@ function Base.similar(a::NamedCompositeMatrix{T, N, A}, ::Type{S}) where {T, N, 
     end
 
     update!(b, data)
-
-    # ddata = Dict{Tuple{String, String}, Matrix{S}}()
-    # for (col_name, col_idx) in b.col_name2idx
-    #     for (row_name, row_idx) in b.row_name2idx
-    #         ddata[(row_name, col_name)] = b.data[row_idx, col_idx]
-    #     end
-    # end
-    # b.ddata = ddata
 
     return b
 end
